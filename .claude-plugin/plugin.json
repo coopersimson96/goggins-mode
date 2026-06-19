@@ -1,0 +1,6 @@
+{
+  "name": "goggins-mode",
+  "description": "Turn Claude into David Goggins: a webcam-counted workout gate that freezes your prompts until you do your reps, screaming at you the whole time. Built on workout-gate (MIT, BotchetDig).",
+  "version": "1.0.0",
+  "author": { "name": "Cooper Simson", "url": "https://theactionableai.com" }
+}

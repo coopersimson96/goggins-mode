@@ -1,0 +1,232 @@
+"""Exercise detection from pose landmarks. No UI, no files, no webcam.
+
+Three layers:
+- RepCounter: hysteresis state machine fed joint angles (unit-testable).
+- PushupCounter / SquatCounter: extract landmarks from a MediaPipe pose
+  result, apply posture guards, feed a RepCounter.
+- EXERCISES: registry mapping a name to its counter and on-screen cue, so
+  adding an exercise is one entry here and nothing else changes.
+
+Deliberately dumb and solid: a rep is one full down (joint angle < down)
+followed by a full up (joint angle > up), with smoothing to ignore jitter.
+"""
+import math
+from collections import deque
+
+# MediaPipe pose landmark indices
+L_SHOULDER, R_SHOULDER = 11, 12
+L_ELBOW, R_ELBOW = 13, 14
+L_WRIST, R_WRIST = 15, 16
+L_HIP, R_HIP = 23, 24
+L_KNEE, R_KNEE = 25, 26
+L_ANKLE, R_ANKLE = 27, 28
+
+DOWN_ANGLE = 95.0   # elbow angle below this = bottom of the pushup
+UP_ANGLE = 150.0    # elbow angle above this = arms extended
+KNEE_DOWN_ANGLE = 100.0  # knee angle below this = bottom of the squat
+KNEE_UP_ANGLE = 160.0    # knee angle above this = standing
+MIN_VISIBILITY = 0.5
+MAX_TORSO_TILT = 45.0   # degrees from horizontal; lying-ish body required (pushups)
+SMOOTH_FRAMES = 3
+
+
+def angle_at(a, b, c) -> float:
+    """Angle ABC in degrees, points as (x, y)."""
+    v1 = (a[0] - b[0], a[1] - b[1])
+    v2 = (c[0] - b[0], c[1] - b[1])
+    n1 = math.hypot(*v1)
+    n2 = math.hypot(*v2)
+    if n1 == 0 or n2 == 0:
+        return 180.0
+    cos = max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)))
+    return math.degrees(math.acos(cos))
+
+
+class RepCounter:
+    """Counts down→up transitions of the elbow angle with hysteresis."""
+
+    def __init__(self, down_angle: float = DOWN_ANGLE, up_angle: float = UP_ANGLE):
+        self.down_angle = down_angle
+        self.up_angle = up_angle
+        self.count = 0
+        self.is_down = False
+        self._window = deque(maxlen=SMOOTH_FRAMES)
+
+    def update(self, elbow_angle: float) -> bool:
+        """Feed one frame's elbow angle. Returns True if a rep just completed."""
+        self._window.append(elbow_angle)
+        smoothed = sum(self._window) / len(self._window)
+        if not self.is_down and smoothed < self.down_angle:
+            self.is_down = True
+        elif self.is_down and smoothed > self.up_angle:
+            self.is_down = False
+            self.count += 1
+            return True
+        return False
+
+    @property
+    def smoothed_angle(self) -> float:
+        return sum(self._window) / len(self._window) if self._window else 180.0
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# HOW TO ADD AN EXERCISE (the whole "factory" lives here)
+#
+# 1. Write a counter subclassing ExerciseCounter: declare the joint angle to
+#    track (SIDES = left/right (a, b, c) landmark triples, b is the vertex),
+#    the DOWN/UP angle thresholds, and optionally override posture() to reject
+#    frames where the body isn't in the right shape.
+# 2. Add one entry to the EXERCISES registry below (label, counter, on-screen
+#    cue, default rep range, and a one-set "default_max" used by the wizard).
+#
+# That's it. Config defaults, presets, the wizard, the dashboard, stats and
+# the choice screen all read the registry — nothing else to touch. Fork away.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _best_side(landmarks, side_ids):
+    """Pick the body side the camera sees best. Returns (side_index, points)
+    for the side with the highest minimum visibility, or None if neither is
+    visible enough."""
+    best = None
+    for idx, ids in enumerate(side_ids):
+        pts = [landmarks[i] for i in ids]
+        vis = min(p.visibility for p in pts)
+        if best is None or vis > best[0]:
+            best = (vis, idx, pts)
+    if best is None or best[0] < MIN_VISIBILITY:
+        return None
+    return best[1], best[2]
+
+
+class ExerciseCounter:
+    """Base class: best-side selection + angle + down/up hysteresis. A concrete
+    exercise sets SIDES / DOWN_ANGLE / UP_ANGLE and may override posture().
+
+    Exposes the interface the UI relies on: count, is_down, angle,
+    body_visible, posture_ok, and update(landmarks) -> True on a completed rep.
+    """
+    SIDES = ()          # ((a, b, c), (a, b, c)) landmark-index triples; b = vertex
+    DOWN_ANGLE = 95.0
+    UP_ANGLE = 150.0
+
+    def __init__(self):
+        self.reps = RepCounter(self.DOWN_ANGLE, self.UP_ANGLE)
+        self.body_visible = False
+        self.posture_ok = False
+        self.angle = 180.0
+
+    @property
+    def count(self) -> int:
+        return self.reps.count
+
+    @property
+    def is_down(self) -> bool:
+        return self.reps.is_down
+
+    def posture(self, landmarks, side_idx, pts) -> bool:
+        """Override to reject frames where the body isn't in position. pts are
+        the chosen side's (a, b, c) landmarks; side_idx is 0 (left)/1 (right)
+        for looking up other joints on the same side."""
+        return True
+
+    def update(self, landmarks) -> bool:
+        """landmarks: sequence with .x, .y, .visibility (MediaPipe
+        pose_landmarks.landmark), or None. Returns True on a completed rep."""
+        self.body_visible = False
+        self.posture_ok = False
+        if landmarks is None:
+            return False
+        picked = _best_side(landmarks, self.SIDES)
+        if picked is None:
+            return False
+        side_idx, pts = picked
+        self.body_visible = True
+        self.posture_ok = self.posture(landmarks, side_idx, pts)
+        if not self.posture_ok:
+            return False
+        a, b, c = pts
+        self.angle = angle_at((a.x, a.y), (b.x, b.y), (c.x, c.y))
+        return self.reps.update(self.angle)
+
+
+class PushupCounter(ExerciseCounter):
+    """Elbow angle (shoulder-elbow-wrist), body horizontal."""
+    SIDES = ((L_SHOULDER, L_ELBOW, L_WRIST), (R_SHOULDER, R_ELBOW, R_WRIST))
+    DOWN_ANGLE = 95.0
+    UP_ANGLE = 150.0
+
+    def posture(self, landmarks, side_idx, pts) -> bool:
+        shoulder = pts[0]
+        hip = landmarks[L_HIP if side_idx == 0 else R_HIP]
+        tilt = math.degrees(math.atan2(abs(shoulder.y - hip.y),
+                                       abs(shoulder.x - hip.x) + 1e-6))
+        return tilt < MAX_TORSO_TILT  # body roughly horizontal, not standing
+
+
+class SquatCounter(ExerciseCounter):
+    """Knee angle (hip-knee-ankle), feet below knees (survives deep squats)."""
+    SIDES = ((L_HIP, L_KNEE, L_ANKLE), (R_HIP, R_KNEE, R_ANKLE))
+    DOWN_ANGLE = KNEE_DOWN_ANGLE
+    UP_ANGLE = KNEE_UP_ANGLE
+
+    def posture(self, landmarks, side_idx, pts) -> bool:
+        knee, ankle = pts[1], pts[2]
+        return ankle.y > knee.y  # standing or squatting, not lying down
+
+
+EXERCISES = {
+    "pushups": {
+        "label": "PUSHUPS",
+        "counter": PushupCounter,
+        "cue": "GET IN PUSHUP POSITION - PROFILE VIEW",
+        "default_reps": (5, 10),
+        "default_max": 20,   # one clean set; seeds the setup wizard
+    },
+    "squats": {
+        "label": "SQUATS",
+        "counter": SquatCounter,
+        "cue": "STAND BACK - FULL BODY IN FRAME",
+        "default_reps": (8, 15),
+        "default_max": 30,
+    },
+    # Goggins-mode set. All knee-driven, so they reuse the squat counter
+    # (hip-knee-ankle angle, full descent then full extension = one rep).
+    "lunges": {
+        "label": "LUNGES",
+        "counter": SquatCounter,
+        "cue": "STAND SIDE-ON - FULL BODY IN FRAME",
+        "default_reps": (15, 15),
+        "default_max": 30,
+        "default_enabled": False,
+    },
+    "goblet_press": {
+        "label": "THRUSTERS",
+        "counter": SquatCounter,
+        "cue": "FULL BODY IN FRAME - SQUAT THEN PRESS OVERHEAD",
+        "default_reps": (15, 15),
+        "default_max": 30,
+        "default_enabled": False,
+    },
+    "burpees": {
+        "label": "BURPEES",
+        "counter": SquatCounter,
+        "cue": "FULL BODY IN FRAME - DROP, THEN STAND TALL",
+        "default_reps": (15, 15),
+        "default_max": 25,
+        "default_enabled": False,
+    },
+}
+
+
+def make_counter(exercise: str):
+    return EXERCISES.get(exercise, EXERCISES["pushups"])["counter"]()
+
+
+def default_exercises_config() -> dict:
+    """The per-exercise config block, derived from the registry. New exercises
+    appear automatically."""
+    return {name: {"enabled": e.get("default_enabled", True),
+                   "reps_min": e["default_reps"][0],
+                   "reps_max": e["default_reps"][1]}
+            for name, e in EXERCISES.items()}

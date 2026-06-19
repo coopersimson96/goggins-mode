@@ -1,0 +1,11 @@
+{
+  "name": "goggins-mode",
+  "owner": { "name": "coopersimson96" },
+  "plugins": [
+    {
+      "name": "goggins-mode",
+      "source": "./",
+      "description": "Goggins mode: Claude won't let you work until you do your reps on camera. A drill-sergeant webcam gate (lunges, thrusters, burpees) + the /goggins command."
+    }
+  ]
+}
