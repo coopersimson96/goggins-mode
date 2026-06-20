@@ -175,6 +175,16 @@ class SquatCounter(ExerciseCounter):
         return ankle.y > knee.y  # standing or squatting, not lying down
 
 
+class PressCounter(ExerciseCounter):
+    """Overhead press: shoulder-elbow-wrist angle. Works standing OR seated and
+    only needs your ARMS in frame (no full body), so it counts reliably from a
+    desk webcam. A rep = bend (hands to shoulders) then press (arms extended)."""
+    SIDES = ((L_SHOULDER, L_ELBOW, L_WRIST), (R_SHOULDER, R_ELBOW, R_WRIST))
+    DOWN_ANGLE = 95.0    # elbows bent, hands at shoulders
+    UP_ANGLE = 150.0     # arms pressed straight overhead
+    # No posture() override: orientation doesn't matter, just the arm motion.
+
+
 EXERCISES = {
     "pushups": {
         "label": "PUSHUPS",
@@ -202,8 +212,8 @@ EXERCISES = {
     },
     "goblet_press": {
         "label": "THRUSTERS",
-        "counter": SquatCounter,
-        "cue": "FULL BODY IN FRAME - SQUAT THEN PRESS OVERHEAD",
+        "counter": PressCounter,
+        "cue": "ARMS IN FRAME - HANDS TO SHOULDERS, PRESS OVERHEAD",
         "default_reps": (15, 15),
         "default_max": 30,
         "default_enabled": False,
