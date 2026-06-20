@@ -72,6 +72,32 @@ VALIDATED = [
 # Shown on the pick-your-pain choice screen.
 CHOICE = "Pick your pain. Either way, you're carrying the boats."
 
+# The "STOP" interruption block, shown when the gate freezes a prompt.
+STOP_OPENERS = [
+    "Stop being a little bitch. You've been sitting too long.",
+    "Time's up. You've been parked on your ass long enough.",
+    "Enough. Your soul's getting soft in that chair.",
+    "Don't even think about that prompt. You haven't earned it yet.",
+    "Put the keyboard down. You don't get to work until you move.",
+]
+STOP_CLOSERS = [
+    "No reps, no prompt. The webcam's counting. Stay hard.",
+    "Close the tab and you still owe them. Get down.",
+    "I'm watching. The camera's watching. Move.",
+]
+
+
+def stop_block(exercise_label: str, reps: int, seed: int = 0) -> str:
+    """The dramatic terminal 'STOP' block when the gate fires."""
+    opener = STOP_OPENERS[seed % len(STOP_OPENERS)]
+    closer = STOP_CLOSERS[seed % len(STOP_CLOSERS)]
+    return (
+        "\n⛔  WORKOUT GATE — PROMPT BLOCKED\n\n"
+        f"   {opener}\n"
+        f"   Get down and give me {reps} {exercise_label.upper()}. On camera. NOW.\n\n"
+        f"   {closer} 💀\n"
+    )
+
 
 def _pick(pool, seed):
     """Deterministic choice so a line is stable for a whole challenge but

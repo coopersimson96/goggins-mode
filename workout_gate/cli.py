@@ -18,6 +18,7 @@ def main(argv=None):
     sub.add_parser("help", help="show this help")
     sub.add_parser("stats", help="totals, streak, record, last 7 days")
     sub.add_parser("report", help="today's rep report across all exercises")
+    sub.add_parser("simulate", help="preview the on-screen STOP block (for demos)")
     sub.add_parser("status", help="show gate state")
     sub.add_parser("statusline", help="compact one-line segment for a Claude Code statusline")
     sub.add_parser("ui", help="full-screen terminal dashboard (curses, arrow keys)")
@@ -134,6 +135,18 @@ def main(argv=None):
 
     elif args.cmd == "report":
         print(render_report(store.load_stats()))
+
+    elif args.cmd == "simulate":
+        import random
+        from .detector import EXERCISES
+        from . import taunts
+        config = store.load_config()
+        names = store.enabled_exercises(config) or list(EXERCISES)
+        ex = random.choice(names)
+        ec = config.get("exercises", {}).get(ex, {})
+        reps = random.randint(ec.get("reps_min", 15), ec.get("reps_max", 15))
+        label = EXERCISES.get(ex, {}).get("label", ex)
+        print(taunts.stop_block(label, reps, seed=random.randint(0, 999)))
 
     elif args.cmd == "statusline":
         # always emit ANSI: statusline output is rendered, not a TTY
