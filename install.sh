@@ -38,6 +38,7 @@ PY=".venv/bin/python"
 "$PY" -m workout_gate set reps burpees 15 15       >/dev/null
 "$PY" -m workout_gate set mode random      >/dev/null
 "$PY" -m workout_gate set time 40          >/dev/null
+"$PY" -m workout_gate debug on              >/dev/null   # show the tracking skeleton on the camera
 
 if [ "${1:-}" = "--global" ]; then
   echo "==> Installing globally (all Claude Code sessions)..."
